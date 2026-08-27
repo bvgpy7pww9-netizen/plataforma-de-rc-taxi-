@@ -1,0 +1,15 @@
+{
+  "name": "rc-taxi-platform",
+  "version": "1.0.0",
+  "description": "Backend real para RC Taxi y Limo - registro de choferes, ubicacion en vivo, panel de despacho",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>RC Taxi — Panel de Despacho</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, Helvetica, Arial, sans-serif;
+    background: #0f0f12; color: #fff; height: 100vh; display: flex; flex-direction: column;
+  }
+  header {
+    padding: 14px 20px; background:#1b1b20; display:flex; align-items:center; justify-content:space-between;
+    border-bottom: 1px solid #29292f;
+  }
+  header h1 { font-size: 18px; margin: 0; }
+  .status { font-size: 13px; color: #999; }
+  main { flex: 1; display: flex; overflow: hidden; }
+  #map { flex: 1; }
+  aside {
+    width: 260px; background: #16161a; overflow-y: auto; border-left: 1px solid #29292f;
+  }
+  .driver-row { padding: 12px 16px; border-bottom: 1px solid #232328; display:flex; align-items:center; gap:10px; }
+  .dot { width:10px; height:10px; border-radius:50%; flex-shrink:0; }
+  .dot.online { background:#1db954; box-shadow:0 0 6px #1db954; }
+  .dot.offline { background:#555; }
+  .d-name { font-size:14px; font-weight:600; }
+  .d-meta { font-size:12px; color:#999; }
+  .gate {
+    position: fixed; inset: 0; background:#0f0f12; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:14px; z-index: 10;
+  }
+  .gate input {
+    padding: 14px; border-radius: 10px; border: 1px solid #333; background:#1b1b20; color:#fff;
+    font-size:16px; width: 240px; text-align:center;
+  }
+  .gate button {
+    padding: 14px 28px; border-radius: 10px; border:none; background:#1db954; color:#000;
+    font-weight:600; font-size:16px; cursor:pointer;
+  }
+  .empty { padding: 20px; color:#777; font-size:13px; text-align:center; }
+</style>
+</head>
+<body>
+
+<div class="gate" id="gate">
+  <h2>Panel de Despacho — RC Taxi</h2>
+  <input id="keyInput" placeholder="Clave de acceso" type="password" />
+  <button onclick="enter()">Entrar</button>
+</div>
+
+<header style="display:none" id="header">
+  <h1>RC Taxi y Limo — Despacho</h1>
+  <div class="status" id="lastRefresh">—</div>
+</header>
+
+<main style="display:none" id="main">
+  <div id="map"></div>
+  <aside id="driverList"></aside>
+</main>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  let key = localStorage.getItem("rc_dispatch_key") || "";
+  let map, markers = {};
+
+  function enter() {
+    const val = document.getElementById("keyInput").value.trim();
+    if (!val) return;
+    key = val;
+    localStorage.setItem("rc_dispatch_key", key);
+    start();
+  }
+
+  async function start() {
+    document.getElementById("gate").style.display = "none";
+    document.getElementById("header").style.display = "flex";
+    document.getElementById("main").style.display = "flex";
+    map = L.map("map").setView([40.9982, -73.6649], 14); // Port Chester, NY
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "&copy; OpenStreetMap contributors",
+      maxZoom: 19,
+    }).addTo(map);
+    refresh();
+    setInterval(refresh, 5000);
+  }
+
+  async function refresh() {
+    try {
+      const r = await fetch("/api/drivers?key=" + encodeURIComponent(key));
+      if (r.status === 401) {
+        alert("Clave incorrecta.");
+        localStorage.removeItem("rc_dispatch_key");
+        location.reload();
+        return;
+      }
+      const data = await r.json();
+      renderDrivers(data.drivers || []);
+      document.getElementById("lastRefresh").textContent =
+        "Actualizado " + new Date().toLocaleTimeString();
+    } catch (e) {
+      document.getElementById("lastRefresh").textContent = "Sin conexión al servidor";
+    }
+  }
+
+  function renderDrivers(drivers) {
+    const list = document.getElementById("driverList");
+    list.innerHTML = "";
+    if (drivers.length === 0) {
+      list.innerHTML = '<div class="empty">Todavía no hay choferes registrados.</div>';
+    }
+    const seen = new Set();
+    drivers.forEach((d) => {
+      seen.add(d.id);
+      const row = document.createElement("div");
+      row.className = "driver-row";
+      row.innerHTML =
+        '<span class="dot ' + (d.online ? "online" : "offline") + '"></span>' +
+        '<div><div class="d-name">' + d.name + " (" + d.carNumber + ")</div>" +
+        '<div class="d-meta">' + (d.online ? "En línea" : "Desconectado") +
+        (d.lastUpdateSecondsAgo != null ? " · hace " + d.lastUpdateSecondsAgo + "s" : "") +
+        "</div></div>";
+      list.appendChild(row);
+
+      if (d.online && d.lat != null && d.lng != null) {
+        if (!markers[d.id]) {
+          markers[d.id] = L.marker([d.lat, d.lng], {
+            icon: L.divIcon({
+              className: "",
+              html:
+                '<div style="background:#1db954;color:#000;font-weight:700;font-size:11px;' +
+                "padding:4px 7px;border-radius:20px;white-space:nowrap;box-shadow:0 0 8px rgba(0,0,0,.5)\">" +
+                d.carNumber + "</div>",
+            }),
+          }).addTo(map);
+        } else {
+          markers[d.id].setLatLng([d.lat, d.lng]);
+        }
+      } else if (markers[d.id]) {
+        map.removeLayer(markers[d.id]);
+        delete markers[d.id];
+      }
+    });
+    // limpiar marcadores de choferes que ya no vienen en la respuesta
+    Object.keys(markers).forEach((id) => {
+      if (!seen.has(id)) { map.removeLayer(markers[id]); delete markers[id]; }
+    });
+  }
+
+  if (key) start();
+</script>
+
+</body>
+</html>
